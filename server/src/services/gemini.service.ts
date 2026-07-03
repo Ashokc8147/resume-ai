@@ -3,6 +3,9 @@ import { env } from '../config/env'
 import { ApiError } from '../utils/ApiError'
 import { IResumeFeedback } from '../models/Resume'
 
+const sleep = (ms: number) =>
+  new Promise(resolve => setTimeout(resolve, ms))
+
 const getModel = () => {
   if (!env.geminiApiKey) {
     throw new ApiError(
@@ -27,6 +30,30 @@ const parseJsonResponse = <T>(text: string): T => {
   return JSON.parse(cleaned) as T
 }
 
+async function generateWithRetry(model: any, prompt: string) {
+  let lastError: any
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      return await model.generateContent(prompt)
+    } catch (error: any) {
+      lastError = error
+
+      console.log(`Gemini attempt ${attempt} failed.`)
+
+      if (error?.status === 503 && attempt < 3) {
+        console.log('Gemini is busy. Waiting 3 seconds before retry...')
+        await sleep(3000)
+        continue
+      }
+
+      throw error
+    }
+  }
+
+  throw lastError
+}
+
 export const geminiService = {
   analyzeResume: async (
     resumeText: string,
@@ -43,28 +70,15 @@ Format:
 {
   "atsScore": 85,
   "feedback": {
-    "strengths": [
-      "...",
-      "...",
-      "..."
-    ],
-    "weaknesses": [
-      "...",
-      "...",
-      "..."
-    ],
-    "suggestions": [
-      "...",
-      "...",
-      "..."
-    ]
+    "strengths": ["..."],
+    "weaknesses": ["..."],
+    "suggestions": ["..."]
   }
 }
 
 Rules:
-- Do NOT use markdown.
-- Do NOT wrap JSON inside \`\`\`.
 - Return ONLY JSON.
+- No markdown.
 
 Resume:
 
@@ -72,13 +86,13 @@ ${resumeText.slice(0, 12000)}
 `
 
     try {
-      const result = await model.generateContent(prompt)
+      const result = await generateWithRetry(model, prompt)
 
       const response = result.response.text()
 
-      console.log("========== GEMINI RESPONSE ==========")
+      console.log('========== GEMINI RESPONSE ==========')
       console.log(response)
-      console.log("=====================================")
+      console.log('=====================================')
 
       const parsed = parseJsonResponse<{
         atsScore: number
@@ -93,9 +107,9 @@ ${resumeText.slice(0, 12000)}
         feedback: parsed.feedback,
       }
     } catch (error) {
-      console.error("========== GEMINI ANALYZE ERROR ==========")
+      console.error('========== GEMINI ANALYZE ERROR ==========')
       console.error(error)
-      console.error("==========================================")
+      console.error('==========================================')
 
       throw error
     }
@@ -107,17 +121,17 @@ ${resumeText.slice(0, 12000)}
     const prompt = `
 You are a professional resume writer.
 
-Rewrite the resume.
+Rewrite and improve the following resume.
 
 Rules:
 
 - Improve grammar.
 - Improve ATS score.
-- Do not invent experience.
 - Keep all factual information.
-- Return ONLY the improved resume text.
+- Do NOT invent projects or experience.
+- Return ONLY the improved resume.
 - No markdown.
-- No explanation.
+- No explanations.
 
 Resume:
 
@@ -125,19 +139,19 @@ ${resumeText.slice(0, 12000)}
 `
 
     try {
-      const result = await model.generateContent(prompt)
+      const result = await generateWithRetry(model, prompt)
 
       const response = result.response.text()
 
-      console.log("========== IMPROVED RESUME ==========")
+      console.log('========== IMPROVED RESUME ==========')
       console.log(response)
-      console.log("====================================")
+      console.log('====================================')
 
       return response.trim()
     } catch (error) {
-      console.error("========== GEMINI IMPROVE ERROR ==========")
+      console.error('========== GEMINI IMPROVE ERROR ==========')
       console.error(error)
-      console.error("==========================================")
+      console.error('==========================================')
 
       throw error
     }
